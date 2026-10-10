@@ -11,3 +11,9 @@ Juego de gestión de parques de atracciones en 3D que se juega directamente en e
     python3 -m http.server 8000
 
 Y abre http://localhost:8000
+
+## Novedades
+
+- **Montaña rusa en modo simple.** El editor abre con pocos botones: Recta, Subida (con cadena automática), Bajada, Izquierda y Derecha. El botón ✨ arma o termina el circuito por ti, lo prueba y abre la atracción. Las piezas avanzadas siguen en «Más piezas y opciones».
+- **Ayuda integrada** (botón «?»): explica cómo cerrar el circuito y qué significan emoción, intensidad y náuseas. Se muestra sola la primera vez.
+- **Sin zoom accidental** al tocar rápido los botones del menú en el celular.
