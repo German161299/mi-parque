@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>Mi Parque</title>
 <meta name="description" content="Mi Parque: construye y gestiona tu parque de atracciones. Diseña montañas rusas, investiga, enfrenta el clima y supera escenarios.">
 <meta name="theme-color" content="#5ec8f2">
@@ -26,6 +26,17 @@ html,body{height:100%;margin:0;background:#8fd0f0;overflow:hidden;overscroll-beh
   -webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}
 #c{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;outline:none;}
 button{font:inherit;color:inherit;border:0;background:none;cursor:pointer;padding:0;}
+body *{touch-action:manipulation;}
+.pc.big{grid-column:1/-1;background:var(--acc);color:#fff;font-size:15px;padding:8px 4px 5px;border-color:rgba(0,0,0,.25);}
+.pc.big i{display:inline;font-size:19px;margin-right:6px;}
+.pc.big small{color:#fff;opacity:.92;font-size:11.5px;}
+.egrid.s3{grid-template-columns:repeat(3,1fr);}
+.pc.mini{padding:5px 1px 3px;}
+.help{font-size:12.5px;line-height:1.3;background:var(--soft);border:2px solid var(--line);border-radius:12px;padding:6px 10px;margin:0 0 6px;font-weight:600;}
+.help b{font-weight:800;}
+.help ol{margin:3px 0 5px;padding-left:18px;}
+.help li{margin:2px 0;}
+.sh .x.q{background:var(--sun);color:#1d2b53;font-weight:800;}
 button:focus-visible{outline:3px solid var(--acc);outline-offset:2px;}
 
 .chip{background:var(--panel);color:var(--pink);border:2px solid var(--line);border-bottom-width:4px;border-radius:14px;
@@ -1242,6 +1253,85 @@ function coasterBase(b){
   return true;
 }
 
+/* ====================== edición simple: cierre automático del circuito ====================== */
+function vFits(b,cur,t,extra){ /* ¿cabe esta pieza? Misma lógica que canAdd, sin dinero ni opciones */
+  const T=b.track,a=advance(cur,t,0,0);
+  if(a.end.h<0||a.end.h>HMAX||a.hi>HMAX+2)return null;
+  for(const c of a.cells){
+    if(!inb(c[0],c[1]))return null;
+    const n=idx(c[0],c[1]);
+    if(pathGrid[n])return null;
+    const o=occ[n];if(o&&o!==b)return null;
+    const prev=(o===b?(T.cells[n]||[]):[]).concat(extra[n]||[]);
+    for(const e of prev){if(!(a.lo-e.hi>=CLEAR||e.lo-a.hi>=CLEAR))return null;}
+  }
+  const ex=a.end.x,ey=a.end.y;if(!inb(ex,ey))return null;const en=idx(ex,ey);
+  if(pathGrid[en])return null;if(occ[en]&&occ[en]!==b)return null;
+  if(occ[en]===b&&T.station.indexOf(en)>=0){if(!(ex===T.S0.x&&ey===T.S0.y&&a.end.d===T.d&&a.end.h===0))return null;}
+  return a;
+}
+const SIMPLE_MOVES=["s","d","l","r","u"];
+/* A* con peso: busca pocas piezas que lleven desde "startCur" a la estación (recto y a nivel), con al menos "minUps" subidas con cadena,
+   rodeando caminos, edificios y la propia pista */
+function findClosure(b,startCur,maxLen,minUps){
+  minUps=minUps||0;
+  const T=b.track,goal={x:T.S0.x,y:T.S0.y,d:T.d,h:0},W=1.4;
+  const key=(c,lc)=>(((c.x*64+c.y)*4+c.d)*16+c.h)*8+lc;
+  const hf=(c,lc)=>Math.max(Math.abs(c.x-goal.x)+Math.abs(c.y-goal.y),c.h+2*(minUps-lc));
+  const heap=[];const push=n=>{heap.push(n);let i=heap.length-1;while(i>0){const p=(i-1)>>1;if(heap[p].f<=heap[i].f)break;[heap[p],heap[i]]=[heap[i],heap[p]];i=p;}};
+  const pop=()=>{const top=heap[0],last=heap.pop();if(heap.length){heap[0]=last;let i=0;for(;;){let l=2*i+1,r=l+1,m=i;if(l<heap.length&&heap[l].f<heap[m].f)m=l;if(r<heap.length&&heap[r].f<heap[m].f)m=r;if(m===i)break;[heap[m],heap[i]]=[heap[i],heap[m]];i=m;}}return top;};
+  const seen=new Map();seen.set(key(startCur,0),0);
+  push({cur:startCur,lc:0,g:0,f:W*hf(startCur,0),par:null,t:null,a:null});
+  let nodes=0;
+  while(heap.length&&nodes<30000){
+    const nd=pop();nodes++;
+    const extra={};
+    for(let q=nd;q&&q.a;q=q.par)for(const c of q.a.cells){const n=idx(c[0],c[1]);(extra[n]=extra[n]||[]).push({lo:q.a.lo,hi:q.a.hi});}
+    for(const t of SIMPLE_MOVES){
+      const a=vFits(b,nd.cur,t,extra);if(!a)continue;
+      const e=a.end,g2=nd.g+1,lc=Math.min(minUps,nd.lc+(t==="u"?1:0));if(g2>maxLen)continue;
+      const tk=t==="u"?"u*":t;
+      if(e.x===goal.x&&e.y===goal.y&&e.d===goal.d&&e.h===goal.h&&lc>=minUps){
+        const seq=[tk];for(let q=nd;q&&q.t;q=q.par)seq.push(q.t);return seq.reverse();
+      }
+      const k=key(e,lc);if(seen.has(k)&&seen.get(k)<=g2)continue;seen.set(k,g2);
+      push({cur:e,lc:lc,g:g2,f:g2+W*hf(e,lc),par:nd,t:tk,a:a});
+    }
+  }
+  return null;
+}
+function seqCost(seq){return seq.reduce((s,t)=>s+PIECES[t.replace("*","")].cost+(t.endsWith("*")?15:0),0);}
+function undoTo(b,n){while(b.track.pieces.length>n)coasterUndo(b);}
+/* coloca una lista de piezas; si alguna falla, deshace lo colocado en este intento */
+function applySeq(b,seq){
+  const n0=b.track.pieces.length;
+  for(const tk of seq){
+    const chain=tk.endsWith("*"),t=tk.replace("*","");
+    const r=coasterAdd(b,t,chain,false,0,0);
+    if(!r.ok){undoTo(b,n0);return r;}
+  }
+  return{ok:true};
+}
+/* Un solo botón: arma o termina el circuito (con subida con cadena incluida) y lo prueba */
+function autoClose(b){
+  const T=b.track;
+  if(T.complete)return{ok:false,r:"El circuito ya está cerrado."};
+  const hasLift=T.pieces.some(p=>p.c);
+  let last="",brokeMoney="";
+  for(const k of hasLift?[0]:[3,4,5,6]){
+    const n0=T.pieces.length;
+    const seq=findClosure(b,T.cur,30,k);
+    if(!seq){last="No hay espacio para cerrar el circuito desde aquí. Prueba en una zona más despejada, gira la estación o toca «Deshacer».";continue;}
+    const cost=seqCost(seq);
+    if(S.money<cost){brokeMoney="Terminar el circuito cuesta $"+fmt(cost)+" y no te alcanza.";continue;}
+    const r=applySeq(b,seq);if(!r.ok){last=r.r;continue;}
+    coasterVerify(b);const st=b.track.stats;
+    if((st&&st.ok)||hasLift)return{ok:true,valid:!!(st&&st.ok),reason:st?st.reason:"",n:T.pieces.length-n0};
+    last=st?st.reason:"El circuito no funcionó.";undoTo(b,n0);
+  }
+  return{ok:false,r:brokeMoney||last||"No se pudo cerrar el circuito."};
+}
+
 /* ====================== construcción ====================== */
 function canPlace(def,x,y,w,h){
   w=w||def.w;h=h||def.h;
@@ -2030,9 +2120,9 @@ tabsEl.addEventListener("click",e=>{const b=e.target.closest("button[data-c]");i
 $("rotTool").addEventListener("click",()=>{tool.rot=(tool.rot+1)%4;SFX.click();if(ghostTile)updateGhost(ghostTile);});
 
 /* ====================== editor de montañas rusas (interfaz) ====================== */
-const ed={chain:false,msg:"",ok:true,min:false,sl:0,bk:0};
+const ed={chain:false,msg:"",ok:true,min:false,sl:0,bk:0,simple:true};
 function openEditor(b){
-  editor=b;sel=null;tool.mode="hand";tool.key=null;tool.cat="hand";ed.chain=false;ed.sl=0;ed.bk=0;ed.msg="";
+  editor=b;sel=null;tool.mode="hand";tool.key=null;tool.cat="hand";ed.chain=false;ed.sl=0;ed.bk=0;ed.msg="";ed.simple=true;
   ghost.visible=false;ghostArrow.visible=false;renderTabs();updateHint();
   const p=bPos(b);cg.x=p.x;cg.z=p.z;cg.dist=Math.min(cg.dist,52);
   editor.track&&focusEnd();
@@ -2051,7 +2141,50 @@ function pieceBtn(t,compact){
 }
 const slopeOf=t=>TURNS.indexOf(t)>=0?ed.sl:0;
 const bankOf=t=>t==="o"?0:ed.bk;
+const HELP_HTML="<b>Cómo funciona</b><ol>"+
+  "<li>Una montaña rusa es un <b>circuito cerrado</b>: sale de la estación y tiene que <b>volver a ella</b>, a ras de suelo y entrando recto.</li>"+
+  "<li><b>↗️ Subida</b> sube con cadena (el motor que arrastra el tren). Necesitas al menos una. <b>↘️ Bajada</b> baja y le da velocidad: cuanto más alto subas, más rápido irá.</li>"+
+  "<li><b>↰ ↱ Giros</b> cambian de dirección y <b>⬆️ Recta</b> avanza una casilla. La flecha verde del mapa marca dónde va la siguiente pieza.</li>"+
+  "<li><b>✨ Automático</b> hace todo esto por ti. Si ya empezaste tu recorrido, termina tu circuito. Se puede <b>↩️ Deshacer</b> y te devuelve el dinero.</li></ol>"+
+  "<b>Qué significan las barras</b><ul style='margin:3px 0 0;padding-left:18px'>"+
+  "<li><b>Emoción:</b> más es mejor; los visitantes eligen y disfrutan más la atracción.</li>"+
+  "<li><b>Intensidad:</b> si es muy alta, a los visitantes miedosos les gusta menos.</li>"+
+  "<li><b>Náuseas:</b> por encima de 4, muchos se marean y se van de mal humor.</li></ul>"+
+  "<div style='margin-top:4px'>Si dice «Se detiene antes de terminar», sube más alto o agrega otra subida.</div>";
+function renderSimpleEditor(b){
+  if(ed.help===undefined){try{ed.help=!localStorage.getItem("parque_ayuda_rusa");localStorage.setItem("parque_ayuda_rusa","1");}catch(e){ed.help=true;}}
+  const T=b.track;sheet.hidden=false;sheet.style.maxHeight=ed.help?"64vh":"";sheet.style.overflowY="auto";
+  const sp=(t,lab)=>"<button class='pc' data-p='"+t+"' id='pc_"+t+"'><i>"+PIECES[t].ic+"</i>"+lab+"<small id='pcc_"+t+"'></small></button>";
+  sheet.innerHTML="<div class='sh'><div class='big'>🎢</div><h3>Montaña rusa</h3><button class='x q' data-a='help' aria-label='Ayuda'>?</button><button class='x' data-a='exit' aria-label='Salir'>✕</button></div><div id='emsg' class='msg'></div>"+
+    "<div class='egrid s3'><button class='pc big' data-a='auto' id='eauto'><i>✨</i><span id='eautot'>Hacer circuito automático</span><small id='eautos'>El juego lo arma por ti</small></button>"+
+    sp("s","Recta")+sp("u","Subida")+sp("d","Bajada")+sp("l","Izquierda")+sp("r","Derecha")+
+    "<button class='pc' data-a='undo'><i>↩️</i>Deshacer<small>reembolso</small></button>"+
+    "<button class='pc wide mini' data-a='adv'><i>⚙️</i>Más piezas y opciones</button></div>"+(ed.help?"<div class='help'>"+HELP_HTML+"</div>":"")+"<div id='est'></div>";
+  sheet.onclick=ev=>{
+    const el=ev.target.closest("button");if(!el)return;
+    const a=el.dataset.a,p=el.dataset.p;
+    if(a==="exit"){SFX.click();closeEditor();return;}
+    if(a==="help"){ed.help=!ed.help;SFX.click();renderEditor();return;}
+    if(a==="adv"){ed.simple=false;sheet.style.overflowY="";SFX.click();renderEditor();return;}
+    if(a==="undo"){if(coasterUndo(b)){SFX.click();ed.msg="";focusEnd();}}
+    else if(a==="auto"){
+      const r=autoClose(b);
+      if(r.ok){SFX.build();focusEnd();ed.msg="";
+        if(r.valid){b.open=true;toast("🎢 ¡Circuito listo! Atracción abierta");}else toast("⚠️ "+(r.reason||"Revisa el circuito"));}
+      else{ed.msg=r.r;toast(r.r);SFX.error();}
+    }
+    else if(p){
+      if(el.classList.contains("dis")){const v=canAdd(b,p,p==="u",0,0);toast(v.r||"No se puede");SFX.error();return;}
+      const r=coasterAdd(b,p,p==="u",false,0,0);
+      if(r.ok){SFX.build();ed.msg="";focusEnd();if(b.track.complete){const st=b.track.stats;if(st&&st.ok){b.open=true;toast("🎢 ¡Circuito completo! Atracción abierta");}else toast("⚠️ "+(st?st.reason:"Circuito inválido"));}}
+      else{toast(r.r);SFX.error();}
+    }
+    renderEditor();
+  };
+  updateEditor();
+}
 function renderEditor(){
+  if(ed.simple){renderSimpleEditor(editor);return;}
   const b=editor,T=b.track;sheet.hidden=false;
   let html="<div class='sh'><div class='big'>🎢</div><h3>Editor de montaña rusa</h3><button class='x' data-a='min' aria-label='Plegar'>"+(ed.min?"▴":"▾")+"</button><button class='x' data-a='exit' aria-label='Salir'>✕</button></div><div id='emsg' class='msg'></div>";
   const BK=[[-2,"↶↶"],[-1,"↶"],[0,"Auto"],[1,"↷"],[2,"↷↷"]];
@@ -2063,7 +2196,7 @@ function renderEditor(){
   }else{
     sheet.style.maxHeight="46vh";
     html+="<div class='kv'><span>Piezas · altura actual</span><b id='epc'></b></div>"+mods+"<div class='egrid'>"+PIECE_ORDER.map(t=>pieceBtn(t,false)).join("")+
-      "<button class='pc' data-a='undo'><i>↩️</i>Deshacer<small>reembolso</small></button><button class='pc wide' data-a='base'><i>📋</i>Diseño base<small id='ebase'></small></button><button class='pc wide' data-a='test'><i>✅</i>Probar circuito<small>estadísticas</small></button></div><div id='est'></div>";
+      "<button class='pc' data-a='undo'><i>↩️</i>Deshacer<small>reembolso</small></button><button class='pc wide' data-a='simple'><i>✨</i>Modo simple<small>menos botones</small></button><button class='pc wide' data-a='base'><i>📋</i>Diseño base<small id='ebase'></small></button><button class='pc wide' data-a='test'><i>✅</i>Probar circuito<small>estadísticas</small></button></div><div id='est'></div>";
   }
   sheet.innerHTML=html;
   sheet.onclick=ev=>{
@@ -2071,6 +2204,7 @@ function renderEditor(){
     const a=el.dataset.a,p=el.dataset.p;
     if(el.dataset.bk!==undefined){ed.bk=+el.dataset.bk;SFX.click();renderEditor();return;}
     if(a==="exit"){SFX.click();closeEditor();return;}
+    if(a==="simple"){ed.simple=true;SFX.click();renderEditor();return;}
     if(a==="min"){ed.min=!ed.min;SFX.click();renderEditor();return;}
     if(a==="chain"){ed.chain=!ed.chain;SFX.click();}
     else if(a==="slope"){ed.sl=ed.sl===0?1:(ed.sl===1?-1:0);SFX.click();}
@@ -2106,10 +2240,11 @@ function updateEditor(){
   setText("epc",T.pieces.length+" · nivel "+T.cur.h+"/"+HMAX);
   for(const t of PIECE_ORDER){
     const el=$("pc_"+t);if(!el)continue;
-    const sl=slopeOf(t),bk=bankOf(t),v=canAdd(b,t,ed.chain&&true,sl,bk),P=PIECES[t];
+    const sl=slopeOf(t),bk=bankOf(t),ch=ed.simple?t==="u":ed.chain&&true,v=canAdd(b,t,ch,sl,bk),P=PIECES[t];
     el.classList.toggle("dis",!v.ok);el.style.opacity=v.ok?"":".38";
-    const sc=$("pcc_"+t);if(sc)sc.textContent=P.res&&!has(P.res)?"🔬":"$"+(P.cost+(ed.chain&&(t==="s"||t==="u"||t==="U"||(sl>0&&TURNS.indexOf(t)>=0))?15:0)+(sl?10:0)+(bk?10:0));
+    const sc=$("pcc_"+t);if(sc)sc.textContent=P.res&&!has(P.res)?"🔬":"$"+(P.cost+(ch&&(t==="s"||t==="u"||t==="U"||(sl>0&&TURNS.indexOf(t)>=0))?15:0)+(sl?10:0)+(bk?10:0));
   }
+  if(ed.simple){setText("eautot",T.complete?"Circuito cerrado":(T.pieces.length?"Cerrar circuito automático":"Hacer circuito automático"));const ea=$("eauto");if(ea)ea.disabled=!!T.complete;}
   const ec=$("echain");if(ec)ec.classList.toggle("on",ed.chain);setText("echs",ed.chain?"SÍ":"NO");
   [-2,-1,0,1,2].forEach(v=>{const el=$("ebk"+(v<0?"n"+(-v):v));if(el)el.classList.toggle("on",ed.bk===v);});
   const es=$("eslope");if(es)es.classList.toggle("on",ed.sl!==0);setText("eslp",ed.sl>0?"suben ↗":ed.sl<0?"bajan ↘":"planos");
@@ -2117,14 +2252,15 @@ function updateEditor(){
   const st=T.stats,m=$("emsg");
   let msg,cls="msg";
   if(T.complete){if(st&&st.ok){msg=ed.min?"✔ Circuito listo: emoción "+st.exc+" · intensidad "+st.int+" · náuseas "+st.nau:"✔ Circuito cerrado y probado. Atracción abierta.";cls+=" ok";}else{msg="⚠️ "+(st?st.reason:"Sin probar");cls+=" bad";}}
-  else msg=ed.msg||"Coloca piezas y vuelve a la estación para cerrar el circuito (flecha verde = siguiente pieza).";
+  else msg=ed.msg||(ed.simple?(T.pieces.length?"Sigue con las flechas o toca ✨ para que el juego cierre el circuito por ti.":"Toca ✨ y tendrás una montaña rusa lista. O ármala tú con las flechas de abajo (↗️ sube con cadena)."):"Coloca piezas y vuelve a la estación para cerrar el circuito (flecha verde = siguiente pieza).");
   if(m){if(m.textContent!==msg)m.textContent=msg;m.className=cls;}
   const e=$("est");
   if(e){
     if(st){
       const html="<div class='bars'>"+barRow("Emoción","ee","#ff5a36")+barRow("Intensidad","ei","#ffc233")+barRow("Náuseas","en","#2ec4a0")+"</div>"+
         "<div class='kv'><span>Velocidad máx. · media</span><b>"+st.maxV+" · "+st.avgV+"</b></div><div class='kv'><span>Longitud · caídas</span><b>"+st.len+" u · "+st.drops+"</b></div><div class='kv'><span>Aire · vueltas · g lateral</span><b>"+st.air+" · "+st.inv+" · "+st.lat+"</b></div>";
-      if(e.dataset.k!==JSON.stringify(st)){e.innerHTML=html;e.dataset.k=JSON.stringify(st);}
+      const cap=ed.simple?"<div class='sub' style='margin-top:4px'>Emoción alta = más visitantes. Intensidad alta asusta a algunos. Náuseas &gt; 4: se marean.</div>":"";
+      if(e.dataset.k!==JSON.stringify(st)){e.innerHTML=html+cap;e.dataset.k=JSON.stringify(st);}
       setBar("ee",st.exc*10);setBar("ei",st.int*10);setBar("en",st.nau*10);
     }else if(e.innerHTML){e.innerHTML="";e.dataset.k="";}
   }
@@ -2512,12 +2648,29 @@ $("btnCont").addEventListener("click",()=>start(true));
 gateStart();renderTabs();
 requestAnimationFrame(frame);
 
-window.__parque={readImport:readImport,exportSave:exportSave,touch:touch,flushSave:flushSave,SCEN:SCEN,GOAL_INFO:GOAL_INFO,W:W,WX:WX,startScenario:startScenario,scenarioCheck:scenarioCheck,weatherTick:weatherTick,lightning:lightning,goalsMet:goalsMet,setQuality:setQuality,ed:ed,cg:cg,cam:cam,S:S,DEFS:DEFS,PIECES:PIECES,BASE_DESIGN:BASE_DESIGN,UPG:UPG,RES:RES,buildings:buildings,guests:guests,crew:crew,tryBuild:tryBuild,tryPath:tryPath,refreshMaps:refreshMaps,simStep:simStep,start:start,pathGrid:pathGrid,idx:idx,GATE:GATE,GW:GW,GH:GH,
+window.__parque={renderEditor:renderEditor,findClosure:findClosure,autoClose:autoClose,seqCost:seqCost,applySeq:applySeq,advance:advance,readImport:readImport,exportSave:exportSave,touch:touch,flushSave:flushSave,SCEN:SCEN,GOAL_INFO:GOAL_INFO,W:W,WX:WX,startScenario:startScenario,scenarioCheck:scenarioCheck,weatherTick:weatherTick,lightning:lightning,goalsMet:goalsMet,setQuality:setQuality,ed:ed,cg:cg,cam:cam,S:S,DEFS:DEFS,PIECES:PIECES,BASE_DESIGN:BASE_DESIGN,UPG:UPG,RES:RES,buildings:buildings,guests:guests,crew:crew,tryBuild:tryBuild,tryPath:tryPath,refreshMaps:refreshMaps,simStep:simStep,start:start,pathGrid:pathGrid,idx:idx,GATE:GATE,GW:GW,GH:GH,
   demolishAt:demolishAt,select:select,setCat:setCat,tool:tool,saveGame:saveGame,loadGame:loadGame,endDay:endDay,litter:litter,coasterAdd:coasterAdd,coasterUndo:coasterUndo,coasterBase:coasterBase,coasterVerify:coasterVerify,canAdd:canAdd,
   upgrade:upgrade,restock:restock,syncCrew:syncCrew,openEditor:openEditor,closeEditor:closeEditor,computeRating:computeRating,spawnRate:spawnRate,fairFee:fairFee,has:has,researchTick:researchTick,
   get connected(){return connected;},get pathCount(){return pathCount;},get editor(){return editor;}};
 })();
 
+</script>
+<script>
+/* Si el navegador llegó a ampliar la página (zoom), se vuelve al tamaño normal automáticamente */
+(function(){
+  const vp=document.querySelector('meta[name=viewport]');if(!vp||!window.visualViewport)return;
+  const base=vp.content;let busy=false;
+  function reset(){
+    if(busy||window.visualViewport.scale<=1.02)return;busy=true;
+    vp.content='width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
+    setTimeout(function(){vp.content=base;busy=false;},400);
+  }
+  window.visualViewport.addEventListener('resize',reset);
+  document.addEventListener('gesturestart',function(e){e.preventDefault();});
+  document.addEventListener('gesturechange',function(e){e.preventDefault();});
+  document.addEventListener('dblclick',function(e){e.preventDefault();},{passive:false});
+  document.addEventListener('touchmove',function(e){if(e.touches&&e.touches.length>1&&e.target&&e.target.id!=='c')e.preventDefault();},{passive:false});
+})();
 </script>
 </body>
 </html>
